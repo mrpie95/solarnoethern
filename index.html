@@ -1,0 +1,824 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0A0E27">
+<link rel="manifest" href="./manifest.json">
+<link rel="icon" href="./icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="./icon.svg">
+<title>Aurora globe — live from NOAA SWPC</title>
+<style>
+  :root {
+    --bg: #0A0E27; --bg-2: #141A3B; --bg-3: #1E2650;
+    --ink: #E8EBF5; --ink-2: #9AA3C7; --ink-3: #5E6796;
+    --accent: #7FE7C2; --warn: #FFD166; --bad: #B8227A;
+    --rule: #252D5A;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg); color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    font-size: 15px; line-height: 1.6; -webkit-font-smoothing: antialiased;
+  }
+  .page { max-width: 1180px; margin: 0 auto; padding: 2rem 1.5rem 4rem; }
+  header { margin-bottom: 1.5rem; }
+  h1 { font-size: 28px; font-weight: 500; margin: 0 0 0.35rem; letter-spacing: -0.01em; }
+  header .sub { color: var(--ink-2); font-size: 16px; margin: 0; }
+  h2 { font-size: 18px; font-weight: 500; margin: 1.75rem 0 0.75rem; letter-spacing: -0.01em; }
+  h3 { font-size: 13px; font-weight: 500; margin: 1.25rem 0 0.5rem; color: var(--ink-2); text-transform: uppercase; letter-spacing: 0.08em; }
+  p { margin: 0 0 0.75rem; }
+  .muted { color: var(--ink-2); }
+  .dim { color: var(--ink-3); font-size: 13px; }
+  a { color: var(--accent); text-decoration: none; border-bottom: 0.5px solid rgba(127,231,194,0.3); }
+  a:hover { border-bottom-color: var(--accent); }
+  code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 13px; color: var(--accent); background: rgba(127,231,194,0.08); padding: 1px 5px; border-radius: 3px; }
+
+  .live-strip {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 1.5rem;
+    align-items: center;
+    background: var(--bg-2);
+    border: 0.5px solid var(--rule);
+    border-radius: 12px;
+    padding: 1rem 1.25rem;
+    margin-bottom: 1.25rem;
+  }
+  @media (max-width: 720px) { .live-strip { grid-template-columns: 1fr; gap: 0.75rem; } }
+  .live-kp { display: flex; align-items: baseline; gap: 12px; }
+  .live-kp-val { font-size: 40px; font-weight: 300; letter-spacing: -0.02em; line-height: 1; font-variant-numeric: tabular-nums; }
+  .live-kp-lbl { font-size: 12px; color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.08em; }
+  .live-kp-status { font-size: 14px; color: var(--ink-2); }
+  .live-updated { font-size: 12px; color: var(--ink-3); text-align: right; }
+  @media (max-width: 720px) { .live-updated { text-align: left; } }
+  .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--ink-3); margin-right: 6px; }
+  .status-dot.ok { background: var(--accent); box-shadow: 0 0 0 3px rgba(127,231,194,0.15); }
+  .status-dot.err { background: var(--bad); }
+  .status-dot.warn-dot { background: var(--warn); }
+  .status-dot.load { background: var(--warn); animation: pulse 1.2s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+  .forecast-row { display: flex; gap: 2px; height: 28px; margin-top: 6px; }
+  .forecast-cell {
+    flex: 1; border-radius: 2px; position: relative;
+    display: flex; align-items: end; justify-content: center;
+    font-size: 9px; color: rgba(10,14,39,0.8); padding-bottom: 1px;
+    cursor: default;
+  }
+  .forecast-cell[data-obs="predicted"] { border: 0.5px dashed rgba(232,235,245,0.4); }
+  .forecast-labels { display: flex; gap: 2px; margin-top: 4px; font-size: 10px; color: var(--ink-3); }
+  .forecast-labels span { flex: 1; text-align: center; font-variant-numeric: tabular-nums; }
+
+  .layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+    gap: 1.5rem;
+    align-items: start;
+  }
+  @media (max-width: 860px) { .layout { grid-template-columns: 1fr; } }
+
+  .globe-card {
+    background: var(--bg-2);
+    border: 0.5px solid var(--rule);
+    border-radius: 14px;
+    padding: 1rem;
+    position: sticky; top: 1rem;
+  }
+  @media (max-width: 860px) { .globe-card { position: static; } }
+  .globe-wrap { position: relative; aspect-ratio: 1/1; }
+  .globe-svg, .globe-canvas {
+    width: 100%; height: 100%; display: block;
+    position: absolute; top: 0; left: 0;
+  }
+  .globe-svg { touch-action: none; cursor: grab; }
+  .globe-svg:active { cursor: grabbing; }
+  .globe-canvas { pointer-events: none; }
+
+  .hover-info {
+    position: absolute; top: 10px; left: 12px;
+    background: rgba(10,14,39,0.78);
+    backdrop-filter: blur(6px);
+    border: 0.5px solid var(--rule);
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 13px; color: var(--ink-2);
+    pointer-events: none;
+    max-width: 220px;
+  }
+  .hover-info strong { color: var(--ink); font-weight: 500; }
+
+  .toggles {
+    display: flex; flex-wrap: wrap; gap: 8px;
+    margin-top: 10px; padding-top: 10px;
+    border-top: 0.5px solid var(--rule);
+    font-size: 12px;
+  }
+  .toggles button {
+    background: transparent; border: 0.5px solid var(--rule);
+    color: var(--ink-2); font-size: 12px;
+    padding: 5px 10px; border-radius: 6px; cursor: pointer;
+    font-family: inherit; transition: all 0.15s;
+  }
+  .toggles button:hover { color: var(--ink); border-color: var(--ink-3); }
+  .toggles button.on { color: var(--accent); border-color: rgba(127,231,194,0.4); background: rgba(127,231,194,0.06); }
+  .toggles .sep { color: var(--ink-3); padding: 5px 4px; }
+
+  .legend { margin: 0.75rem 0 1rem; }
+  .legend-bar { display: flex; height: 16px; border-radius: 4px; overflow: hidden; border: 0.5px solid var(--rule); }
+  .legend-bar > div { flex: 1; }
+  .legend-ticks { display: grid; grid-template-columns: repeat(10, 1fr); font-size: 11px; color: var(--ink-3); font-variant-numeric: tabular-nums; margin-top: 2px; }
+  .legend-ticks span { text-align: center; }
+
+  .g-scale { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; margin-top: 0.5rem; font-size: 11px; }
+  .g-scale div { padding: 6px 4px; text-align: center; background: var(--bg-3); border-radius: 4px; color: var(--ink-2); }
+  .g-scale div strong { display: block; color: var(--ink); font-weight: 500; margin-bottom: 2px; }
+
+  table.cities { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.cities th { text-align: left; font-weight: 500; color: var(--ink-3); padding: 6px 8px 8px; border-bottom: 0.5px solid var(--rule); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
+  table.cities td { padding: 7px 8px; border-bottom: 0.5px solid rgba(37,45,90,0.4); font-variant-numeric: tabular-nums; }
+  table.cities tr:hover td { background: rgba(30,38,80,0.4); cursor: pointer; }
+  table.cities tr.hl td { background: rgba(127,231,194,0.08); }
+  table.cities tr.hl td:first-child { color: var(--accent); font-weight: 500; }
+  .pill { display: inline-block; padding: 1px 7px; border-radius: 8px; font-size: 11px; font-variant-numeric: tabular-nums; }
+  .vis-yes { color: var(--accent); font-weight: 500; }
+  .vis-no { color: var(--ink-3); }
+
+  .sw-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 0.5rem 0; }
+  .sw-cell { background: var(--bg-3); padding: 8px 10px; border-radius: 6px; }
+  .sw-cell .sw-lbl { font-size: 10px; color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.06em; }
+  .sw-cell .sw-val { font-size: 16px; font-weight: 500; font-variant-numeric: tabular-nums; margin-top: 2px; }
+  .sw-cell .sw-unit { font-size: 11px; color: var(--ink-2); font-weight: 400; }
+
+  .notes { display: grid; gap: 8px; margin: 0.5rem 0; font-size: 14px; }
+  .note-item { display: flex; gap: 10px; }
+  .note-item::before { content: ""; flex-shrink: 0; width: 4px; height: 4px; border-radius: 50%; background: var(--ink-3); margin-top: 10px; }
+  .note-item b { color: var(--ink); font-weight: 500; }
+
+  details { border-top: 0.5px solid var(--rule); padding: 0.75rem 0; }
+  details summary { cursor: pointer; font-size: 13px; color: var(--ink-2); font-weight: 500; }
+  details summary:hover { color: var(--ink); }
+  details[open] summary { margin-bottom: 0.5rem; }
+
+  footer { margin-top: 2.5rem; padding-top: 1.25rem; border-top: 0.5px solid var(--rule); color: var(--ink-3); font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="page">
+
+<header>
+  <h1>Aurora globe <span style="font-size:14px;font-weight:400;color:var(--accent);vertical-align:middle;margin-left:8px;"><span class="status-dot load" id="main-dot"></span>live</span></h1>
+  <p class="sub">Real-time aurora nowcast from NOAA SWPC, overlaid on the typical visibility threshold model</p>
+</header>
+
+<div class="live-strip">
+  <div class="live-kp">
+    <div>
+      <div class="live-kp-lbl">Current Kp</div>
+      <div class="live-kp-val" id="kp-now">—</div>
+    </div>
+    <div class="live-kp-status" id="kp-status">Fetching…</div>
+  </div>
+  <div>
+    <div class="live-kp-lbl">Next 72h forecast</div>
+    <div class="forecast-row" id="forecast-row"></div>
+    <div class="forecast-labels" id="forecast-labels"></div>
+  </div>
+  <div class="live-updated" id="live-updated"><span class="status-dot load"></span>loading…</div>
+</div>
+
+<div class="layout">
+
+<div class="globe-card">
+  <div class="globe-wrap">
+    <svg class="globe-svg" id="globe" viewBox="0 0 600 600">
+      <circle cx="300" cy="300" r="270" fill="#141A3B" stroke="#252D5A" stroke-width="0.5"/>
+      <g id="g-bands"></g>
+      <g id="g-grat"></g>
+      <g id="g-countries"></g>
+    </svg>
+    <canvas class="globe-canvas" id="ovation-canvas" width="1200" height="1200"></canvas>
+    <svg class="globe-svg" id="globe-top" viewBox="0 0 600 600" style="pointer-events:none;">
+      <g id="g-maglat"></g>
+      <g id="g-pole"></g>
+      <g id="g-cities"></g>
+    </svg>
+    <div class="hover-info" id="hover">
+      <strong id="h-title">Drag the globe to rotate</strong><br>
+      <span id="h-sub" class="dim">Click any city for details</span>
+    </div>
+  </div>
+  <div class="toggles">
+    <button class="on" data-layer="bands">threshold zones</button>
+    <button class="on" data-layer="ovation">live aurora</button>
+    <button class="on" data-layer="countries">countries</button>
+    <button class="on" data-layer="cities">cities</button>
+    <span class="sep">·</span>
+    <button data-view="polar">polar</button>
+    <button data-view="europe">europe</button>
+    <button data-view="na">N america</button>
+  </div>
+</div>
+
+<aside>
+
+<h2>What's on the globe</h2>
+<p><b style="color:var(--accent)">Live aurora:</b> the glowing overlay shows current aurora probability from NOAA's OVATION model, updated roughly every 5 minutes from DSCOVR satellite data. This is what's <em>actually</em> happening up there right now.</p>
+<p><b>Threshold zones:</b> the colored bands underneath show where aurora <em>typically</em> becomes visible at each Kp level. Static reference, not real-time.</p>
+
+<h3>Kp → typical southern edge</h3>
+<div class="legend">
+  <div class="legend-bar" id="legend-bar"></div>
+  <div class="legend-ticks">
+    <span>0</span><span>1</span><span>2</span><span>3</span><span>4</span>
+    <span>5</span><span>6</span><span>7</span><span>8</span><span>9</span>
+  </div>
+</div>
+<div class="g-scale">
+  <div><strong>G1</strong>Kp 5<br>minor</div>
+  <div><strong>G2</strong>Kp 6<br>moderate</div>
+  <div><strong>G3</strong>Kp 7<br>strong</div>
+  <div><strong>G4</strong>Kp 8<br>severe</div>
+  <div><strong>G5</strong>Kp 9<br>extreme</div>
+</div>
+
+<h3>Solar wind (DSCOVR)</h3>
+<div class="sw-grid">
+  <div class="sw-cell"><div class="sw-lbl">Speed</div><div class="sw-val" id="sw-speed">— <span class="sw-unit">km/s</span></div></div>
+  <div class="sw-cell"><div class="sw-lbl">Bz</div><div class="sw-val" id="sw-bz">— <span class="sw-unit">nT</span></div></div>
+  <div class="sw-cell"><div class="sw-lbl">Density</div><div class="sw-val" id="sw-density">— <span class="sw-unit">p/cm³</span></div></div>
+</div>
+<p class="dim">Negative Bz opens the magnetic "door" for solar particles. Bz &lt; −5 nT combined with wind speed &gt; 500 km/s = strong aurora driver.</p>
+
+<h3>Cities — click to highlight</h3>
+<table class="cities" id="city-table">
+  <thead>
+    <tr><th>City</th><th>Mag lat</th><th>Min Kp</th><th>Tonight?</th></tr>
+  </thead>
+  <tbody id="city-tbody"></tbody>
+</table>
+
+<details>
+<summary>Viewing factors beyond Kp</summary>
+<div class="notes" style="margin-top:0.5rem;">
+  <div class="note-item"><span><b>Cloud cover</b> — most common reason people miss aurora. Check forecast for the northern horizon direction.</span></div>
+  <div class="note-item"><span><b>Light pollution</b> — urban glow drowns out faint aurora. From NL: Lauwersoog, Frisian islands, Veluwe, Hoge Rielen in BE.</span></div>
+  <div class="note-item"><span><b>Moon phase</b> — full moon washes out faint displays. New moon ± 5 days is ideal.</span></div>
+  <div class="note-item"><span><b>Time of night</b> — substorms peak 22:00–02:00 local time.</span></div>
+  <div class="note-item"><span><b>Equinox bonus</b> — March and September have ~2× more storms (Russell–McPherron effect).</span></div>
+  <div class="note-item"><span><b>Solar cycle</b> — we're near Solar Cycle 25 maximum. 2024–2026 are the best years in two decades.</span></div>
+</div>
+</details>
+
+<details>
+<summary>Caveats of this model</summary>
+<div class="notes" style="margin-top:0.5rem;">
+  <div class="note-item"><span>The threshold formula <code>min Kp = (66 − mag lat) / 2</code> gives naked-eye visibility. Long-exposure photography captures aurora 1–2 Kp below this.</span></div>
+  <div class="note-item"><span>The real auroral oval is squashed toward the night side. This circular model approximates the dayside extent.</span></div>
+  <div class="note-item"><span>Extreme storms (G5) produce red SAR arcs visible much further south than either model shows — May 2024 aurora reached Mexico.</span></div>
+  <div class="note-item"><span>OVATION is itself a model, not direct observation. It infers aurora from particle precipitation measured at L1 (~1.5M km upstream).</span></div>
+</div>
+</details>
+
+<details>
+<summary>Data sources</summary>
+<div class="notes" style="margin-top:0.5rem;">
+  <div class="note-item"><span><a href="https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json" target="_blank">Planetary Kp JSON</a> — 3-hour observed values, NOAA SWPC</span></div>
+  <div class="note-item"><span><a href="https://services.swpc.noaa.gov/products/noaa-planetary-k-index-forecast.json" target="_blank">Kp forecast JSON</a> — 72-hour predicted values</span></div>
+  <div class="note-item"><span><a href="https://services.swpc.noaa.gov/json/ovation_aurora_latest.json" target="_blank">OVATION nowcast JSON</a> — 1°×1° aurora probability grid</span></div>
+  <div class="note-item"><span><a href="https://services.swpc.noaa.gov/products/solar-wind/mag-1-day.json" target="_blank">Solar wind magnetometer</a> — DSCOVR realtime Bz</span></div>
+  <div class="note-item"><span><a href="https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json" target="_blank">Country borders</a> — Natural Earth via world-atlas</span></div>
+</div>
+</details>
+
+</aside>
+</div>
+
+<footer>
+  <div>Built with D3 + TopoJSON. All live data from NOAA SWPC public JSON APIs (no key required, CORS-enabled). If opening this file locally and seeing "live data unavailable", serve via <code>python3 -m http.server</code> and open <code>http://localhost:8000</code>.</div>
+</footer>
+
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/topojson/3.0.2/topojson.min.js"></script>
+<script>
+(function(){
+  const W = 600, H = 600, R = 270;
+  const CW = 1200, CH = 1200, CSCALE = CW / W;
+  const MAG_POLE = [-72.7, 80.7];
+
+  const KP_COLORS = [
+    '#7FE7C2','#5FD5B5','#3FC3A8','#1FA698','#1A7F9E',
+    '#2458A8','#4A45A8','#7A3DA8','#A83D8E','#B8227A'
+  ];
+  const KP_FREQ = [
+    'nightly at pole','near-nightly','very frequent','frequent','weekly-ish',
+    '~monthly (G1)','~yearly (G2)','several/cycle (G3)','~2×/cycle (G4)','~4×/cycle (G5)'
+  ];
+
+  const cities = [
+    { name: 'Voorburg, NL', lon: 4.37, lat: 52.07, hl: true },
+    { name: 'Amersfoort, NL', lon: 5.39, lat: 52.16 },
+    { name: 'Amsterdam, NL', lon: 4.90, lat: 52.37 },
+    { name: 'Groningen, NL', lon: 6.57, lat: 53.22 },
+    { name: 'Lauwersoog, NL', lon: 6.20, lat: 53.41 },
+    { name: 'London, UK', lon: -0.13, lat: 51.51 },
+    { name: 'Edinburgh, UK', lon: -3.19, lat: 55.95 },
+    { name: 'Dublin, IE', lon: -6.26, lat: 53.35 },
+    { name: 'Paris, FR', lon: 2.35, lat: 48.86 },
+    { name: 'Berlin, DE', lon: 13.40, lat: 52.52 },
+    { name: 'Copenhagen, DK', lon: 12.57, lat: 55.68 },
+    { name: 'Warsaw, PL', lon: 21.01, lat: 52.23 },
+    { name: 'Moscow, RU', lon: 37.62, lat: 55.76 },
+    { name: 'Oslo, NO', lon: 10.75, lat: 59.91 },
+    { name: 'Bergen, NO', lon: 5.32, lat: 60.39 },
+    { name: 'Stockholm, SE', lon: 18.07, lat: 59.33 },
+    { name: 'Helsinki, FI', lon: 24.94, lat: 60.17 },
+    { name: 'Kiruna, SE', lon: 20.23, lat: 67.86 },
+    { name: 'Tromsø, NO', lon: 18.96, lat: 69.65 },
+    { name: 'Murmansk, RU', lon: 33.08, lat: 68.97 },
+    { name: 'Longyearbyen, SJ', lon: 15.63, lat: 78.22 },
+    { name: 'Reykjavík, IS', lon: -21.82, lat: 64.13 },
+    { name: 'Nuuk, GL', lon: -51.74, lat: 64.18 },
+    { name: 'Iqaluit, CA', lon: -68.52, lat: 63.75 },
+    { name: 'Churchill, CA', lon: -94.17, lat: 58.77 },
+    { name: 'Yellowknife, CA', lon: -114.37, lat: 62.45 },
+    { name: 'Whitehorse, CA', lon: -135.05, lat: 60.72 },
+    { name: 'Fairbanks, US', lon: -147.72, lat: 64.84 },
+    { name: 'Anchorage, US', lon: -149.90, lat: 61.22 },
+    { name: 'Vancouver, CA', lon: -123.12, lat: 49.28 },
+    { name: 'Seattle, US', lon: -122.33, lat: 47.61 },
+    { name: 'Minneapolis, US', lon: -93.27, lat: 44.98 },
+    { name: 'Chicago, US', lon: -87.63, lat: 41.88 },
+    { name: 'Toronto, CA', lon: -79.38, lat: 43.65 },
+    { name: 'Montreal, CA', lon: -73.57, lat: 45.50 },
+    { name: 'Boston, US', lon: -71.06, lat: 42.36 },
+    { name: 'New York, US', lon: -74.00, lat: 40.71 }
+  ];
+
+  const toRad = Math.PI / 180;
+  function magLat(lon, lat) {
+    const dLon = (lon - MAG_POLE[0]) * toRad;
+    const l1 = MAG_POLE[1] * toRad, l2 = lat * toRad;
+    const c = Math.sin(l1)*Math.sin(l2) + Math.cos(l1)*Math.cos(l2)*Math.cos(dLon);
+    return 90 - Math.acos(Math.max(-1, Math.min(1, c))) * 180 / Math.PI;
+  }
+  cities.forEach(c => {
+    c.mag = magLat(c.lon, c.lat);
+    c.minKp = Math.max(0, Math.min(9, Math.ceil((66 - c.mag) / 2)));
+  });
+
+  let rotation = [0, -70, 0];
+  const proj = d3.geoOrthographic()
+    .scale(R).translate([W/2, H/2]).rotate(rotation).clipAngle(90);
+  const path = d3.geoPath(proj);
+
+  const svg = d3.select('#globe');
+  const svgTop = d3.select('#globe-top');
+  const gBands = svg.select('#g-bands');
+  const gGrat = svg.select('#g-grat');
+  const gCountries = svg.select('#g-countries');
+  const gMaglat = svgTop.select('#g-maglat');
+  const gPole = svgTop.select('#g-pole');
+  const gCities = svgTop.select('#g-cities');
+  const canvas = document.getElementById('ovation-canvas');
+  const cctx = canvas.getContext('2d');
+
+  const layers = { bands: true, ovation: true, countries: true, cities: true };
+  let countryFeatures = [];
+  let ovationData = null;
+  let highlightCity = null;
+  let currentKp = null;
+
+  const legendBar = document.getElementById('legend-bar');
+  KP_COLORS.forEach(c => {
+    const d = document.createElement('div');
+    d.style.background = c;
+    legendBar.appendChild(d);
+  });
+
+  gGrat.append('path')
+    .datum(d3.geoGraticule().step([30, 15])())
+    .attr('d', path)
+    .attr('fill', 'none')
+    .attr('stroke', 'rgba(255,255,255,0.06)')
+    .attr('stroke-width', 0.5);
+
+  function drawBands() {
+    gBands.selectAll('*').remove();
+    if (!layers.bands) return;
+    for (let kp = 9; kp >= 0; kp--) {
+      const rad = 90 - (66 - 2 * kp);
+      const circle = d3.geoCircle().center(MAG_POLE).radius(rad)();
+      gBands.append('path')
+        .datum(circle)
+        .attr('d', path)
+        .attr('fill', KP_COLORS[kp])
+        .attr('fill-opacity', 0.45)
+        .attr('stroke', 'rgba(10,14,39,0.3)')
+        .attr('stroke-width', 0.4)
+        .attr('data-kp', kp)
+        .style('cursor', 'pointer')
+        .on('mouseenter', function() {
+          const k = +this.getAttribute('data-kp');
+          showHover('Kp ' + k + ' zone',
+            'mag lat ≥ ' + (66 - 2*k) + '°<br>' +
+            (k >= 5 ? 'G' + (k - 4) + ' storm · ' : '') +
+            KP_FREQ[k]);
+        });
+    }
+  }
+
+  function drawCountries() {
+    gCountries.selectAll('path').remove();
+    if (!layers.countries || !countryFeatures.length) return;
+    gCountries.selectAll('path')
+      .data(countryFeatures)
+      .join('path')
+      .attr('d', path)
+      .attr('fill', 'none')
+      .attr('stroke', 'rgba(255,255,255,0.28)')
+      .attr('stroke-width', 0.5);
+  }
+
+  function drawOvation() {
+    cctx.clearRect(0, 0, CW, CH);
+    if (!layers.ovation || !ovationData) return;
+    const center = [-rotation[0], -rotation[1]];
+    const halfPi = Math.PI / 2;
+    for (let i = 0; i < ovationData.length; i++) {
+      const [lon, lat, prob] = ovationData[i];
+      if (d3.geoDistance([lon, lat], center) >= halfPi) continue;
+      const p = proj([lon, lat]);
+      if (!p) continue;
+      const alpha = Math.min(0.85, prob / 50);
+      const cx = p[0] * CSCALE, cy = p[1] * CSCALE;
+      const hue = prob > 30 ? 150 : prob > 10 ? 140 : 130;
+      const light = 40 + Math.min(35, prob * 0.8);
+      cctx.fillStyle = `hsla(${hue}, 70%, ${light}%, ${alpha})`;
+      cctx.beginPath();
+      cctx.arc(cx, cy, 4, 0, 6.28);
+      cctx.fill();
+    }
+  }
+
+  function drawMagLatRings(kpHl) {
+    gMaglat.selectAll('*').remove();
+    if (kpHl == null) return;
+    const rad = 90 - (66 - 2 * kpHl);
+    const circle = d3.geoCircle().center(MAG_POLE).radius(rad)();
+    gMaglat.append('path')
+      .datum(circle)
+      .attr('d', path)
+      .attr('fill', 'none')
+      .attr('stroke', '#E8EBF5')
+      .attr('stroke-width', 1.5)
+      .attr('stroke-dasharray', '5,3');
+  }
+
+  function isVisible(lon, lat) {
+    const c = [-rotation[0], -rotation[1]];
+    return d3.geoDistance([lon, lat], c) < Math.PI / 2;
+  }
+
+  function drawPole() {
+    gPole.selectAll('*').remove();
+    if (!isVisible(MAG_POLE[0], MAG_POLE[1])) return;
+    const [x, y] = proj(MAG_POLE);
+    const g = gPole.append('g').attr('transform', `translate(${x},${y})`);
+    g.append('circle').attr('r', 4).attr('fill', '#E8EBF5').attr('stroke', '#0A0E27').attr('stroke-width', 1.5);
+    g.append('text').attr('x', 8).attr('y', 4).attr('font-size', 11).attr('fill', '#E8EBF5')
+      .attr('stroke', '#0A0E27').attr('stroke-width', 3).attr('paint-order', 'stroke').attr('font-weight', 500)
+      .text('mag N pole');
+  }
+
+  function drawCities() {
+    gCities.selectAll('*').remove();
+    if (!layers.cities) return;
+    cities.forEach(c => {
+      if (!isVisible(c.lon, c.lat)) return;
+      const [x, y] = proj([c.lon, c.lat]);
+      const isHl = c.hl || (highlightCity && highlightCity.name === c.name);
+      const g = gCities.append('g')
+        .attr('transform', `translate(${x},${y})`)
+        .style('cursor', 'pointer')
+        .style('pointer-events', 'all')
+        .on('click', () => selectCity(c))
+        .on('mouseenter', () => showHover(c.name,
+          'mag lat: ' + c.mag.toFixed(1) + '°<br>' +
+          'needs Kp: ' + c.minKp + '+<br>' +
+          (currentKp != null ? (currentKp >= c.minKp ? '<span style="color:#7FE7C2">possibly visible now</span>' : '<span style="color:#5E6796">below threshold now</span>') : '')));
+      g.append('circle')
+        .attr('r', isHl ? 6 : 3.5)
+        .attr('fill', c.hl ? '#FFD166' : (isHl ? '#7FE7C2' : '#E8EBF5'))
+        .attr('stroke', '#0A0E27')
+        .attr('stroke-width', 1.5);
+      g.append('text')
+        .attr('x', isHl ? 10 : 7).attr('y', 4)
+        .attr('font-size', isHl ? 12 : 11).attr('font-weight', isHl ? 500 : 400)
+        .attr('fill', isHl ? '#FFD166' : '#E8EBF5')
+        .attr('stroke', '#0A0E27').attr('stroke-width', 3).attr('paint-order', 'stroke')
+        .text(c.name.split(',')[0]);
+    });
+  }
+
+  function redrawAll() {
+    gGrat.selectAll('path').attr('d', path);
+    drawBands();
+    drawCountries();
+    drawOvation();
+    drawMagLatRings(highlightCity ? highlightCity.minKp : null);
+    drawPole();
+    drawCities();
+  }
+
+  function showHover(title, sub) {
+    document.getElementById('h-title').textContent = title;
+    document.getElementById('h-sub').innerHTML = sub;
+  }
+
+  function selectCity(c) {
+    highlightCity = (highlightCity && highlightCity.name === c.name) ? null : c;
+    drawMagLatRings(highlightCity ? highlightCity.minKp : null);
+    drawCities();
+    renderCityTable();
+  }
+
+  function renderCityTable() {
+    const tbody = document.getElementById('city-tbody');
+    tbody.innerHTML = '';
+    cities.slice().sort((a,b) => a.minKp - b.minKp).forEach(c => {
+      const tr = document.createElement('tr');
+      if (highlightCity && highlightCity.name === c.name) tr.className = 'hl';
+      const tonight = currentKp != null
+        ? (currentKp >= c.minKp ? '<span class="vis-yes">yes</span>' : '<span class="vis-no">no</span>')
+        : '<span class="vis-no">—</span>';
+      tr.innerHTML = `
+        <td>${c.name}</td>
+        <td>${c.mag.toFixed(1)}°</td>
+        <td><span class="pill" style="background:${KP_COLORS[c.minKp]}33;color:${KP_COLORS[c.minKp]}">Kp ${c.minKp}+</span></td>
+        <td>${tonight}</td>
+      `;
+      tr.addEventListener('click', () => selectCity(c));
+      tbody.appendChild(tr);
+    });
+  }
+  renderCityTable();
+
+  // --- Fetching live data ---
+
+  function formatAgo(ms) {
+    const s = Math.round(ms / 1000);
+    if (s < 60) return s + 's ago';
+    if (s < 3600) return Math.round(s/60) + ' min ago';
+    return Math.round(s/3600) + ' h ago';
+  }
+
+  function kpStatusText(kp) {
+    if (kp < 3) return 'quiet — aurora only near Arctic circle';
+    if (kp < 5) return 'unsettled — aurora over Scandinavia only';
+    if (kp < 6) return 'G1 storm — aurora possible from Scotland';
+    if (kp < 7) return 'G2 storm — possible from northern NL';
+    if (kp < 8) return 'G3 storm — possible across much of NL';
+    if (kp < 9) return 'G4 storm — possible across southern Europe';
+    return 'G5 extreme — possible from Mediterranean';
+  }
+
+  // IndexedDB cache for last successful NOAA responses.
+  const idb = {
+    _p: null,
+    open() {
+      return this._p || (this._p = new Promise((resolve, reject) => {
+        const req = indexedDB.open('aurora-cache', 1);
+        req.onupgradeneeded = () => req.result.createObjectStore('noaa');
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      }));
+    },
+    async put(key, value) {
+      const db = await this.open();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction('noaa', 'readwrite');
+        tx.objectStore('noaa').put({ value, savedAt: Date.now() }, key);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+    },
+    async get(key) {
+      const db = await this.open();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction('noaa', 'readonly');
+        const req = tx.objectStore('noaa').get(key);
+        req.onsuccess = () => resolve(req.result || null);
+        req.onerror = () => reject(req.error);
+      });
+    }
+  };
+
+  function fetchOne(url) {
+    return fetch(url, { cache: 'no-store' }).then(r => {
+      if (!r.ok) throw new Error(url + ': ' + r.status);
+      return r.json();
+    });
+  }
+
+  async function fetchOrCache(url, key) {
+    try {
+      const data = await fetchOne(url);
+      idb.put(key, data).catch(() => {});
+      return { data, stale: false, savedAt: Date.now() };
+    } catch (e) {
+      const cached = await idb.get(key).catch(() => null);
+      if (cached) return { data: cached.value, stale: true, savedAt: cached.savedAt };
+      throw e;
+    }
+  }
+
+  Promise.allSettled([
+    fetchOrCache('https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json', 'kp'),
+    fetchOrCache('https://services.swpc.noaa.gov/products/noaa-planetary-k-index-forecast.json', 'kp-forecast'),
+    fetchOrCache('https://services.swpc.noaa.gov/json/ovation_aurora_latest.json', 'ovation'),
+    fetchOrCache('https://services.swpc.noaa.gov/products/solar-wind/mag-1-day.json', 'sw-mag'),
+    fetchOrCache('https://services.swpc.noaa.gov/products/solar-wind/plasma-1-day.json', 'sw-plasma'),
+    d3.json('https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json')
+  ]).then(results => {
+    const [obsR, forR, ovR, magR, plaR, topoR] = results;
+    const mainDot = document.getElementById('main-dot');
+    const unwrap = (r) => r.status === 'fulfilled' ? r.value.data : null;
+    const anyStale = results.slice(0, 5).some(r => r.status === 'fulfilled' && r.value.stale);
+
+    // Topology
+    if (topoR.status === 'fulfilled') {
+      countryFeatures = topojson.feature(topoR.value, topoR.value.objects.countries).features;
+    }
+
+    // Current Kp
+    if (obsR.status === 'fulfilled') {
+      const rows = unwrap(obsR);
+      const last = rows[rows.length - 1];
+      const kp = parseFloat(last[1]);
+      currentKp = kp;
+      document.getElementById('kp-now').textContent = kp.toFixed(1);
+      document.getElementById('kp-status').textContent = kpStatusText(kp);
+      const t = new Date(last[0].replace(' ', 'T') + 'Z');
+      const stale = obsR.value.stale;
+      document.getElementById('live-updated').innerHTML =
+        '<span class="status-dot ' + (stale ? 'warn-dot' : 'ok') + '"></span>' +
+        (stale ? 'cached · ' : 'NOAA · ') + formatAgo(Date.now() - t.getTime()) +
+        (anyStale ? '<br><span class="dim">offline — showing last cached data</span>' : '');
+      mainDot.className = 'status-dot ' + (stale ? 'load' : 'ok');
+      renderCityTable();
+    } else {
+      document.getElementById('kp-now').textContent = '?';
+      document.getElementById('kp-status').innerHTML =
+        '<span style="color:var(--bad)">Live fetch failed.</span> If opened via file://, serve locally with <code>python3 -m http.server</code>';
+      document.getElementById('live-updated').innerHTML = '<span class="status-dot err"></span>offline — showing static model only';
+      mainDot.className = 'status-dot err';
+    }
+
+    // Forecast
+    if (forR.status === 'fulfilled') {
+      const row = document.getElementById('forecast-row');
+      const labels = document.getElementById('forecast-labels');
+      const now = Date.now();
+      const future = unwrap(forR).filter(d => new Date(d.time_tag).getTime() > now).slice(0, 24);
+      future.forEach((d, i) => {
+        const cell = document.createElement('div');
+        cell.className = 'forecast-cell';
+        const kp = Math.max(0, Math.min(9, Math.round(d.kp)));
+        cell.style.background = KP_COLORS[kp];
+        cell.setAttribute('data-obs', d.observed);
+        cell.textContent = d.kp.toFixed(0);
+        cell.title = new Date(d.time_tag).toUTCString() + ' — Kp ' + d.kp.toFixed(2) + ' (' + d.observed + ')';
+        row.appendChild(cell);
+      });
+      [0, 8, 16, 23].forEach(idx => {
+        if (future[idx]) {
+          const s = document.createElement('span');
+          const t = new Date(future[idx].time_tag);
+          s.textContent = t.getUTCHours().toString().padStart(2,'0') + 'Z' +
+            (idx === 0 ? ' today' : idx === 23 ? ' +3d' : '');
+          s.style.flex = (idx === 0 ? '1' : '8');
+          labels.appendChild(s);
+        }
+      });
+    }
+
+    // OVATION
+    if (ovR.status === 'fulfilled') {
+      ovationData = unwrap(ovR).coordinates
+        .map(([lon, lat, p]) => [lon > 180 ? lon - 360 : lon, lat, p])
+        .filter(p => p[2] >= 3);
+    }
+
+    // Solar wind magnetometer — Bz
+    if (magR.status === 'fulfilled' && unwrap(magR).length > 1) {
+      // Header: [time, bx, by, bz, lon, lat, bt]
+      const rows = unwrap(magR);
+      const header = rows[0];
+      const bzIdx = header.indexOf('bz_gsm');
+      for (let i = rows.length - 1; i > 0; i--) {
+        const bz = parseFloat(rows[i][bzIdx]);
+        if (!isNaN(bz)) {
+          const el = document.getElementById('sw-bz');
+          el.innerHTML = bz.toFixed(1) + ' <span class="sw-unit">nT</span>';
+          if (bz < -5) el.style.color = '#7FE7C2';
+          else if (bz < 0) el.style.color = '#FFD166';
+          break;
+        }
+      }
+    }
+
+    // Solar wind plasma — speed, density
+    if (plaR.status === 'fulfilled' && unwrap(plaR).length > 1) {
+      const rows = unwrap(plaR);
+      const header = rows[0];
+      const spIdx = header.indexOf('speed');
+      const dnIdx = header.indexOf('density');
+      for (let i = rows.length - 1; i > 0; i--) {
+        const sp = parseFloat(rows[i][spIdx]);
+        const dn = parseFloat(rows[i][dnIdx]);
+        if (!isNaN(sp)) {
+          const el = document.getElementById('sw-speed');
+          el.innerHTML = Math.round(sp) + ' <span class="sw-unit">km/s</span>';
+          if (sp > 500) el.style.color = '#FFD166';
+          if (sp > 700) el.style.color = '#7FE7C2';
+        }
+        if (!isNaN(dn)) {
+          document.getElementById('sw-density').innerHTML = dn.toFixed(1) + ' <span class="sw-unit">p/cm³</span>';
+        }
+        if (!isNaN(sp)) break;
+      }
+    }
+
+    redrawAll();
+  });
+
+  const svgEl = document.getElementById('globe');
+  let drag = null;
+  svgEl.addEventListener('pointerdown', e => {
+    drag = { x: e.clientX, y: e.clientY, r: rotation.slice() };
+    svgEl.setPointerCapture(e.pointerId);
+  });
+  svgEl.addEventListener('pointermove', e => {
+    if (!drag) return;
+    const dx = (e.clientX - drag.x) * 0.4;
+    const dy = (e.clientY - drag.y) * 0.4;
+    rotation = [drag.r[0] + dx, Math.max(-90, Math.min(-25, drag.r[1] - dy)), 0];
+    proj.rotate(rotation);
+    redrawAll();
+  });
+  svgEl.addEventListener('pointerup', () => drag = null);
+  svgEl.addEventListener('pointercancel', () => drag = null);
+
+  function animateTo(target) {
+    const start = rotation.slice();
+    const dur = 700;
+    const t0 = performance.now();
+    function step(t) {
+      const p = Math.min(1, (t - t0) / dur);
+      const e = p < 0.5 ? 2*p*p : 1 - Math.pow(-2*p + 2, 2) / 2;
+      rotation = [
+        start[0] + (target[0] - start[0]) * e,
+        start[1] + (target[1] - start[1]) * e,
+        0
+      ];
+      proj.rotate(rotation);
+      redrawAll();
+      if (p < 1) requestAnimationFrame(step);
+    }
+    requestAnimationFrame(step);
+  }
+
+  document.querySelectorAll('.toggles button[data-layer]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const layer = btn.getAttribute('data-layer');
+      layers[layer] = !layers[layer];
+      btn.classList.toggle('on', layers[layer]);
+      redrawAll();
+    });
+  });
+  document.querySelectorAll('.toggles button[data-view]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const v = btn.getAttribute('data-view');
+      if (v === 'polar') animateTo([0, -90, 0]);
+      if (v === 'europe') animateTo([-10, -55, 0]);
+      if (v === 'na') animateTo([100, -55, 0]);
+    });
+  });
+
+  // Refresh every 5 minutes
+  setInterval(() => location.reload(), 5 * 60 * 1000);
+
+  // Register service worker for offline support.
+  if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('./sw.js').catch(() => {});
+    });
+  }
+})();
+</script>
+</body>
+</html>
